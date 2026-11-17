@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "db:migrate": "ts-node src/db/migrate.ts",
+    "start": "node dist/db/migrate.js && node dist/index.js",
     "db:test": "ts-node src/test-connection.ts",
     "db:migrate:prod": "node dist/db/migrate.js"
   },
