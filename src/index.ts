@@ -18,13 +18,18 @@ import { authenticate } from './middleware/auth'
 dotenv.config()
 
 const app = express()
+// Behind Render's proxy: needed for correct client IPs (rate limiting) and https detection
+app.set('trust proxy', 1)
 
 const PORT = Number(process.env.PORT) || 3000
 
 // --- CORS: one policy, must come BEFORE routes ---
-const defaultOrigins = ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000']
+const isProd = process.env.NODE_ENV === 'production'
+// local origins are only allowed while developing; a hosted server accepts just ALLOWED_ORIGINS
+const defaultOrigins = isProd ? [] : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000']
 const envOrigins = (process.env.ALLOWED_ORIGINS ?? '').split(',').map(o => o.trim()).filter(Boolean)
 const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envOrigins]))
+if (isProd && !allowedOrigins.length) console.warn('WARNING: ALLOWED_ORIGINS is empty - browsers will be blocked by CORS. Set it to your web app address.')
 app.use(cors({ origin: allowedOrigins, credentials: true }))
 
 // Security & parsing
@@ -53,7 +58,7 @@ const swaggerSpec = swaggerJsdoc({
       description: 'REST API for the DeepWeed smart weed detection system',
       contact: { name: 'DeepWeed Team' },
     },
-    servers: [{ url: `http://localhost:${PORT}`, description: 'Local development' }],
+    servers: [{ url: isProd ? '/' : `http://localhost:${PORT}`, description: isProd ? 'This server' : 'Local development' }],
     components: {
       securitySchemes: {
         bearerAuth: {
@@ -124,8 +129,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 })
 
 app.listen(PORT, () => {
-  console.log(`\nDeepWeed API running on http://localhost:${PORT}`)
-  console.log(`  Swagger docs → http://localhost:${PORT}/docs`)
-  console.log(`  Health check → http://localhost:${PORT}/health\n`)
+  console.log(`\nDeepWeed API listening on port ${PORT} (${isProd ? 'production' : 'development'})`)
+  console.log('  Swagger docs → /docs   Health check → /health\n')
 })
 export default app

@@ -2,7 +2,13 @@ import bcrypt from 'bcryptjs'
 import { pool } from './pool'
 
 // Hash generated at run time so the seeded admin password (Admin@1234) is guaranteed to match.
-const ADMIN_HASH = bcrypt.hashSync('Admin@1234', 10)
+// The first admin account. Set ADMIN_EMAIL / ADMIN_PASSWORD in the environment BEFORE the first deploy
+// (the defaults are public, so never keep them on an online server).
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@deepweed.app'
+if (!/^[^\s'"\\;]+@[^\s'"\\;]+$/.test(ADMIN_EMAIL)) { console.error('ADMIN_EMAIL is not a valid email'); process.exit(1) }
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@1234'
+if (process.env.NODE_ENV === 'production' && ADMIN_PASSWORD === 'Admin@1234') console.warn('WARNING: ADMIN_PASSWORD is not set - the default, publicly known admin password is being used!')
+const ADMIN_HASH = bcrypt.hashSync(ADMIN_PASSWORD, 10)
 
 const migrations = [
   `
@@ -73,7 +79,7 @@ const migrations = [
   -- Seed default admin account (password: Admin@1234)
   INSERT INTO users (email, password_hash, first_name, last_name, role)
   VALUES (
-    'admin@deepweed.app',
+    '__ADMIN_EMAIL__',
     '__ADMIN_HASH__',
     'System', 'Admin', 'admin'
   )
@@ -124,7 +130,7 @@ async function migrate() {
   try {
     for (let i = 0; i < migrations.length; i++) {
       console.log(`  Migration ${i + 1}/${migrations.length}`)
-      await client.query(migrations[i].replace('__ADMIN_HASH__', () => ADMIN_HASH))
+      await client.query(migrations[i].replace('__ADMIN_HASH__', () => ADMIN_HASH).replace('__ADMIN_EMAIL__', () => ADMIN_EMAIL))
     }
     console.log('Migrations complete.')
   } catch (err) {
