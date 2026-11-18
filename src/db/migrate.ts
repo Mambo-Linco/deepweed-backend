@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs'
+import { randomBytes } from 'node:crypto'
 import { pool } from './pool'
 
 // The first admin account (created only if it does not exist yet). Set ADMIN_EMAIL / ADMIN_PASSWORD in the
@@ -138,6 +139,24 @@ export async function runMigrations(): Promise<void> {
       await client.query(migrations[i].replace('__ADMIN_HASH__', () => hash).replace('__ADMIN_EMAIL__', () => email))
     }
     console.log('Migrations complete.')
+
+    // When ADMIN_EMAIL and ADMIN_PASSWORD are set, they ARE the admin login: replacing the fake example values
+    // with real ones and restarting is enough (the password is re-applied on every start).
+    if (process.env.ADMIN_EMAIL?.trim() && process.env.ADMIN_PASSWORD) {
+      await client.query(
+        `INSERT INTO users (email, password_hash, first_name, last_name, role)
+         VALUES ($1, $2, 'System', 'Admin', 'admin')
+         ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = 'admin', updated_at = now()`,
+        [email, hash]
+      )
+      // the example admin accounts have publicly known passwords: switch them off (kept as inactive farmer accounts)
+      await client.query(
+        `UPDATE users SET role = 'farmer', password_hash = $2, updated_at = now()
+         WHERE role = 'admin' AND email IN ('admin@example.com', 'admin@deepweed.app') AND email <> $1`,
+        [email, bcrypt.hashSync(randomBytes(24).toString('hex'), 10)]
+      )
+      console.log('Admin account synced with ADMIN_EMAIL / ADMIN_PASSWORD.')
+    }
   } finally {
     client.release()
   }

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import type { JwtPayload } from '../types'
+import { jwtSecret } from '../config'
 
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization
@@ -9,8 +10,10 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     return
   }
   const token = header.slice(7)
+  let secret: string
+  try { secret = jwtSecret() } catch (e) { next(e); return } // missing server setting: report it, don't blame the token
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as JwtPayload
+    const payload = jwt.verify(token, secret) as JwtPayload
     req.user = payload
     next()
   } catch {

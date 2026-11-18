@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import { jwtSecret, jwtExpiresIn } from '../config'
 import { z } from 'zod'
 import { query, queryOne } from '../db/pool'
 import type { User } from '../types'
@@ -64,8 +65,8 @@ router.post('/register', async (req: Request, res: Response) => {
   )
   const token = jwt.sign(
     { userId: user.id, email: user.email, role: user.role },
-    process.env.JWT_SECRET!,
-    { expiresIn: (process.env.JWT_EXPIRES_IN ?? '7d') as never }
+    jwtSecret(),
+    { expiresIn: jwtExpiresIn() as never }
   )
   res.status(201).json({ token, user })
 })
@@ -109,8 +110,8 @@ router.post('/login', async (req: Request, res: Response) => {
   const { password_hash: _, ...safeUser } = user
   const token = jwt.sign(
     { userId: user.id, email: user.email, role: user.role },
-    process.env.JWT_SECRET!,
-    { expiresIn: (process.env.JWT_EXPIRES_IN ?? '7d') as never }
+    jwtSecret(),
+    { expiresIn: jwtExpiresIn() as never }
   )
   res.json({ token, user: safeUser })
 })

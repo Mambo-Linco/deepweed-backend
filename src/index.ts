@@ -13,6 +13,7 @@ import scansRouter from './routes/scans'
 import herbicideRouter from './routes/herbicide'
 import feedbackRouter from './routes/feedback'
 import { runMigrations } from './db/migrate'
+import { ConfigError } from './config'
 import predictRouter from './routes/predict'
 import { authenticate } from './middleware/auth'
 
@@ -71,6 +72,7 @@ const isProd = process.env.NODE_ENV === 'production'
 const defaultOrigins = isProd ? [] : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000']
 const envOrigins = (process.env.ALLOWED_ORIGINS ?? '').split(',').map(o => o.trim()).filter(Boolean)
 const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envOrigins]))
+if (isProd && !process.env.JWT_SECRET?.trim()) console.error('ERROR: JWT_SECRET is not set - logins will fail until you add it.')
 if (isProd && !allowedOrigins.length) console.warn('WARNING: ALLOWED_ORIGINS is empty - browsers will be blocked by CORS. Set it to your web app address.')
 app.use(cors({ origin: allowedOrigins, credentials: true }))
 
@@ -151,6 +153,7 @@ app.get('/health', (_req, res) => {
     environment: process.env.NODE_ENV ?? 'development',
     cors_allowed_origins: allowedOrigins,
     ml_service_configured: !!process.env.ML_SERVICE_URL,
+    jwt_secret_set: !!process.env.JWT_SECRET?.trim(),
   })
 })
 
@@ -161,6 +164,11 @@ app.use((_req, res) => {
 
 // Global error handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (err instanceof ConfigError) {
+    console.error(err.message)
+    res.status(503).json({ error: err.message })
+    return
+  }
   if (err instanceof ZodError) {
     res.status(400).json({ error: 'Validation failed', details: err.flatten() })
     return
