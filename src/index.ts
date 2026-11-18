@@ -12,6 +12,7 @@ import authRouter from './routes/auth'
 import scansRouter from './routes/scans'
 import herbicideRouter from './routes/herbicide'
 import feedbackRouter from './routes/feedback'
+import { runMigrations } from './db/migrate'
 import predictRouter from './routes/predict'
 import { authenticate } from './middleware/auth'
 
@@ -22,6 +23,47 @@ const app = express()
 app.set('trust proxy', 1)
 
 const PORT = Number(process.env.PORT) || 3000
+
+// --- Database setup: tables are created/updated by the server itself ---------------------------------------
+// The server starts even if the database is unreachable (wrong URL, sleeping, ...). It keeps retrying and
+// reports the problem at /health, instead of crashing and leaving the web app with "cannot reach the server".
+const dbState = { ready: false, attempts: 0, error: null as string | null }
+
+function describeDbError(e: unknown): string {
+  const err = e as { code?: string; message?: string }
+  const msg = err?.message ?? ''
+  if (!process.env.DATABASE_URL) return 'DATABASE_URL is not set'
+  if (msg.includes('ADMIN_EMAIL')) return msg
+  switch (err?.code) {
+    case '28P01': case '28000': return 'database login failed (wrong user or password in DATABASE_URL)'
+    case '3D000': return 'the database name in DATABASE_URL does not exist'
+    case 'ENOTFOUND': case 'EAI_AGAIN': return 'database host not found (check DATABASE_URL)'
+    case 'ECONNREFUSED': return 'the database refused the connection (check the host and port in DATABASE_URL)'
+    case 'ETIMEDOUT': return 'connecting to the database timed out'
+    case '42501': return 'the database user is not allowed to create tables or extensions'
+  }
+  if (/timeout/i.test(msg)) return 'connecting to the database timed out (it may be waking up)'
+  if (/ssl|tls|certificate/i.test(msg)) return 'SSL problem connecting to the database'
+  return `database setup failed${err?.code ? ` (code ${err.code})` : ''}: see the server logs`
+}
+
+async function initDatabase() {
+  for (;;) {
+    dbState.attempts++
+    try {
+      await runMigrations()
+      dbState.ready = true
+      dbState.error = null
+      console.log('Database ready.')
+      return
+    } catch (e) {
+      dbState.error = describeDbError(e)
+      console.error(`Database setup failed (attempt ${dbState.attempts}): ${dbState.error}`)
+      console.error(e)
+      await new Promise((r) => setTimeout(r, 15_000))
+    }
+  }
+}
 
 // --- CORS: one policy, must come BEFORE routes ---
 const isProd = process.env.NODE_ENV === 'production'
@@ -42,6 +84,12 @@ app.use('/api', rateLimit({
   max: 200,
   message: { error: 'Too many requests, please slow down.' },
 }))
+// Until the database is ready, answer API calls with a clear message instead of a crash
+app.use('/api', (req, res, next) => {
+  if (dbState.ready || req.path.startsWith('/predict/status')) { next(); return }
+  res.status(503).json({ error: 'The database is not ready yet. Try again in a moment.', problem: dbState.error })
+})
+
 app.use('/api/auth', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -96,7 +144,14 @@ app.use('/api/predict', predictRouter)       // image -> top-3 species + herbici
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+  // always 200 so the platform keeps the service up and you can read what is wrong
+  res.json({
+    status: dbState.ready ? 'ok' : 'degraded',
+    db: dbState.ready ? 'ready' : { ready: false, attempts: dbState.attempts, problem: dbState.error },
+    environment: process.env.NODE_ENV ?? 'development',
+    cors_allowed_origins: allowedOrigins,
+    ml_service_configured: !!process.env.ML_SERVICE_URL,
+  })
 })
 
 // 404 handler
@@ -131,5 +186,6 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 app.listen(PORT, () => {
   console.log(`\nDeepWeed API listening on port ${PORT} (${isProd ? 'production' : 'development'})`)
   console.log('  Swagger docs → /docs   Health check → /health\n')
+  void initDatabase()
 })
 export default app

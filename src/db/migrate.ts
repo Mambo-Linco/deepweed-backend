@@ -1,14 +1,17 @@
 import bcrypt from 'bcryptjs'
 import { pool } from './pool'
 
-// Hash generated at run time so the seeded admin password (Admin@1234) is guaranteed to match.
-// The first admin account. Set ADMIN_EMAIL / ADMIN_PASSWORD in the environment BEFORE the first deploy
-// (the defaults are public, so never keep them on an online server).
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@deepweed.app'
-if (!/^[^\s'"\\;]+@[^\s'"\\;]+$/.test(ADMIN_EMAIL)) { console.error('ADMIN_EMAIL is not a valid email'); process.exit(1) }
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@1234'
-if (process.env.NODE_ENV === 'production' && ADMIN_PASSWORD === 'Admin@1234') console.warn('WARNING: ADMIN_PASSWORD is not set - the default, publicly known admin password is being used!')
-const ADMIN_HASH = bcrypt.hashSync(ADMIN_PASSWORD, 10)
+// The first admin account (created only if it does not exist yet). Set ADMIN_EMAIL / ADMIN_PASSWORD in the
+// environment BEFORE the first start: the defaults are public, so never keep them on an online server.
+function adminSeed() {
+  const email = (process.env.ADMIN_EMAIL || '').trim() || 'admin@deepweed.app'
+  if (!/^[^\s'"\\;]+@[^\s'"\\;]+$/.test(email)) throw new Error('ADMIN_EMAIL is not a valid email address')
+  const password = process.env.ADMIN_PASSWORD || 'Admin@1234'
+  if (process.env.NODE_ENV === 'production' && password === 'Admin@1234') {
+    console.warn('WARNING: ADMIN_PASSWORD is not set - the default, publicly known admin password is being used!')
+  }
+  return { email, hash: bcrypt.hashSync(password, 10) }
+}
 
 const migrations = [
   `
@@ -124,22 +127,29 @@ const migrations = [
   `,
 ]
 
-async function migrate() {
+// Safe to run on every start: every statement is idempotent. Throws on failure (the caller decides what to do).
+export async function runMigrations(): Promise<void> {
+  const { email, hash } = adminSeed()
   console.log('Running migrations…')
   const client = await pool.connect()
   try {
     for (let i = 0; i < migrations.length; i++) {
       console.log(`  Migration ${i + 1}/${migrations.length}`)
-      await client.query(migrations[i].replace('__ADMIN_HASH__', () => ADMIN_HASH).replace('__ADMIN_EMAIL__', () => ADMIN_EMAIL))
+      await client.query(migrations[i].replace('__ADMIN_HASH__', () => hash).replace('__ADMIN_EMAIL__', () => email))
     }
     console.log('Migrations complete.')
-  } catch (err) {
-    console.error('Migration failed:', err)
-    process.exit(1)
   } finally {
     client.release()
-    await pool.end()
   }
 }
 
-migrate()
+// `npm run db:migrate` / `node dist/db/migrate.js`
+if (require.main === module) {
+  runMigrations()
+    .then(() => pool.end())
+    .catch(async (err) => {
+      console.error('Migration failed:', err)
+      await pool.end().catch(() => {})
+      process.exit(1)
+    })
+}
